@@ -1,0 +1,56 @@
+dhcpcd5 (6.0.5-1.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * debian/rules (taken from Ubuntu, thanks!):
+      - If config.mk doesn't exist, don't try to run dh_auto_clean.
+        This fixes a FTBFS. (Closes: #723967) (LP: #1251776)
+  * Add missing include for platform-bsd using patch from Petr Salinger
+    (Closes: #719588)
+
+ -- Christoph Egger <christoph@debian.org>  Wed, 04 Dec 2013 14:47:10 +0100
+
+dhcpcd5 (6.0.5-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Roy Marples <roy@marples.name>  Sun, 4 Aug 2013 08:00:44 +0100
+
+dhcpcd5 (6.0.2-1) unstable; urgency=medium
+
+  * New upstream release
+  * recommend the resolvconf package as well (closes: 705759)
+  * -t 0 works (closes: 707705)
+
+ -- Roy Marples <roy@marples.name>  Tue, 25 Jun 2013 14:29:02 +0100
+
+dhcpcd5 (5.5.6-1) unstable; urgency=medium
+
+  * New upstream release
+  * 50-ntp.conf now checks for a valid /etc/ntp.conf (closes: 630420)
+  * Works better with netlink messages to work on bridges (closes: 634331)
+
+ -- Roy Marples <roy@marples.name>  Sun, 1 Apr 2012 09:03:27 +0100
+
+dhcpcd5 (5.2.12-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Roy Marples <roy@marples.name>  Wed, 6 Mar 2011 10:16:22 +0100
+
+dhcpcd5 (5.2.11-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Roy Marples <roy@marples.name>  Mon, 28 Feb 2011 20:35:37 +0100
+
+dhcpcd5 (5.2.8-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Roy Marples <roy@marples.name>  Fri, 22 Oct 2010 19:47:32 +0100
+
+dhcpcd5 (5.2.7-3) unstable; urgency=low
+
+  * Initial upload to Debian (closes: #594672)
+
+ -- Roy Marples <roy@marples.name>  Tue, 23 Sep 2010 10:57:38 +0100
