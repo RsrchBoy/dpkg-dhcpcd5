@@ -1,3 +1,11 @@
+dhcpcd5 (6.4.3) UNRELEASED; urgency=medium
+
+  * Imported Upstream version 6.4.3
+  * brutally hack test/Makefile so it can find crypt/*.o
+  * Debian source from quilt -> native
+
+ -- Chris Weyl <cweyl@alumni.drew.edu>  Thu, 04 Sep 2014 16:23:46 -0700
+
 dhcpcd5 (6.0.5-1.1) unstable; urgency=low
 
   * Non-maintainer upload.
