@@ -32,16 +32,18 @@
 int
 closefrom(int fd)
 {
-	int max = getdtablesize();
-	int i;
-	int r = 0;
+	long max;
+	int i, r;
 
 #ifdef _SC_OPEN_MAX
 	max = sysconf(_SC_OPEN_MAX);
 #else
 	max = getdtablesize();
 #endif
-	for (i = fd; i < max; i++)
-		r += close(i);
+	r = 0;
+	for (i = fd; i < max; i++) {
+		if (close(i) == -1)
+			r = -1;
+	}
 	return r;
 }

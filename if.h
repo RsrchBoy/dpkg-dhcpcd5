@@ -1,6 +1,6 @@
 /*
  * dhcpcd - DHCP client daemon
- * Copyright (c) 2006-2013 Roy Marples <roy@marples.name>
+ * Copyright (c) 2006-2014 Roy Marples <roy@marples.name>
  * All rights reserved
 
  * Redistribution and use in source and binary forms, with or without
@@ -32,16 +32,15 @@
 
 #include <net/if.h>
 #include <netinet/in.h>
-#include <netinet/if_ether.h>
 
 #include "config.h"
-#include "dhcp.h"
 #include "dhcpcd.h"
+#include "ipv4.h"
 #include "ipv6.h"
 
 /* Some systems have route metrics */
 #ifndef HAVE_ROUTE_METRIC
-# ifdef __linux__
+# if defined(__linux__) || defined(SIOCGIFPRIORITY)
 #  define HAVE_ROUTE_METRIC 1
 # endif
 # ifndef HAVE_ROUTE_METRIC
@@ -49,8 +48,11 @@
 # endif
 #endif
 
-#ifndef DUID_LEN
-#  define DUID_LEN			128 + 2
+/* Neighbour reachability and router updates */
+#ifndef HAVE_RTM_GETNEIGH
+# ifdef __linux__
+#  define HAVE_RTM_GETNEIGH
+# endif
 #endif
 
 #define EUI64_ADDR_LEN			8
@@ -85,25 +87,65 @@
 # define IN_LINKLOCAL(addr) ((addr & IN_CLASSB_NET) == LINKLOCAL_ADDR)
 #endif
 
-extern int socket_afnet;
+#define RAW_EOF			1 << 0
+#define RAW_PARTIALCSUM		2 << 0
 
-int open_sockets(void);
+int if_setflag(struct interface *ifp, short flag);
+#define if_up(ifp) if_setflag((ifp), (IFF_UP | IFF_RUNNING))
+struct if_head *if_discover(struct dhcpcd_ctx *, int, char * const *);
+struct interface *if_find(struct dhcpcd_ctx *, const char *);
+void if_free(struct interface *);
+int if_domtu(const char *, short int);
+#define if_getmtu(iface) if_domtu(iface, 0)
+#define if_setmtu(iface, mtu) if_domtu(iface, mtu)
+int if_carrier(struct interface *);
 
-char *hwaddr_ntoa(const unsigned char *, size_t);
-size_t hwaddr_aton(unsigned char *, const char *);
-
-int getifssid(const char *, char *);
-struct if_head *discover_interfaces(int, char * const *);
-void free_interface(struct interface *);
-int do_mtu(const char *, short int);
-#define get_mtu(iface) do_mtu(iface, 0)
-#define set_mtu(iface, mtu) do_mtu(iface, mtu)
-
-int up_interface(struct interface *);
+/* The below functions are provided by if-KERNEL.c */
 int if_conf(struct interface *);
 int if_init(struct interface *);
+int if_getssid(const char *, char *);
+int if_vimaster(const char *);
+int if_openlinksocket(void);
+int if_managelink(struct dhcpcd_ctx *);
 
-int open_link_socket(void);
-int manage_link(int);
-int carrier_status(struct interface *);
+#ifdef INET
+int if_openrawsocket(struct interface *, int);
+ssize_t if_sendrawpacket(const struct interface *,
+    int, const void *, size_t);
+ssize_t if_readrawpacket(struct interface *, int, void *, size_t, int *);
+
+int if_address(const struct interface *,
+    const struct in_addr *, const struct in_addr *,
+    const struct in_addr *, int);
+#define if_addaddress(iface, addr, net, brd)				      \
+	if_address(iface, addr, net, brd, 1)
+#define if_setaddress(iface, addr, net, brd)				      \
+	if_address(iface, addr, net, brd, 2)
+#define if_deladdress(iface, addr, net)				      \
+	if_address(iface, addr, net, NULL, -1)
+
+int if_route(const struct rt *rt, int);
+#define if_addroute(rt) if_route(rt, 1)
+#define if_chgroute(rt) if_route(rt, 0)
+#define if_delroute(rt) if_route(rt, -1)
+#endif
+
+#ifdef INET6
+int if_checkipv6(struct dhcpcd_ctx *ctx, const char *, int);
+int if_nd6reachable(const char *ifname, struct in6_addr *addr);
+
+int if_address6(const struct ipv6_addr *, int);
+#define if_addaddress6(a) if_address6(a, 1)
+#define if_deladdress6(a) if_address6(a, -1)
+int if_addrflags6(const char *, const struct in6_addr *);
+
+int if_route6(const struct rt6 *rt, int);
+#define if_addroute6(rt) if_route6(rt, 1)
+#define if_chgroute6(rt) if_route6(rt, 0)
+#define if_delroute6(rt) if_route6(rt, -1)
+#else
+#define if_checkipv6(a, b, c) (-1)
+#endif
+
+int if_machinearch(char *, size_t);
 #endif

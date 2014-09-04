@@ -1,6 +1,6 @@
 /*
  * dhcpcd - DHCP client daemon
- * Copyright (c) 2006-2008 Roy Marples <roy@marples.name>
+ * Copyright (c) 2006-2014 Roy Marples <roy@marples.name>
  * All rights reserved
 
  * Redistribution and use in source and binary forms, with or without
@@ -25,10 +25,8 @@
  * SUCH DAMAGE.
  */
 
-#ifndef IF_PREF_H
-#define IF_PREF_H
+#ifndef TEST_H
 
-#include "dhcpcd.h"
+int test_hmac_md5(void);
 
-void sort_interfaces(void);
 #endif

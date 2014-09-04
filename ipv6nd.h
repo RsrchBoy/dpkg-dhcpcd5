@@ -1,6 +1,6 @@
 /*
  * dhcpcd - DHCP client daemon
- * Copyright (c) 2006-2013 Roy Marples <roy@marples.name>
+ * Copyright (c) 2006-2014 Roy Marples <roy@marples.name>
  * All rights reserved
 
  * Redistribution and use in source and binary forms, with or without
@@ -25,8 +25,8 @@
  * SUCH DAMAGE.
  */
 
-#ifndef IPV6RS_H
-#define IPV6RS_H
+#ifndef IPV6ND_H
+#define IPV6ND_H
 
 #include <sys/queue.h>
 
@@ -48,7 +48,7 @@ struct ra {
 	struct in6_addr from;
 	char sfrom[INET6_ADDRSTRLEN];
 	unsigned char *data;
-	ssize_t data_len;
+	size_t data_len;
 	struct timeval received;
 	unsigned char flags;
 	uint32_t lifetime;
@@ -57,15 +57,10 @@ struct ra {
 	uint32_t mtu;
 	struct ipv6_addrhead addrs;
 	TAILQ_HEAD(, ra_opt) options;
-
-	unsigned char *ns;
-	size_t nslen;
-	int nsprobes;
-
 	int expired;
 };
 
-extern TAILQ_HEAD(rahead, ra) ipv6_routers;
+TAILQ_HEAD(ra_head, ra);
 
 struct rs_state {
 	unsigned char *rs;
@@ -73,26 +68,43 @@ struct rs_state {
 	int rsprobes;
 };
 
-#define RS_STATE(a) ((struct rs_state *)(ifp)->if_data[IF_DATA_IPV6RS])
+#define RS_STATE(a) ((struct rs_state *)(ifp)->if_data[IF_DATA_IPV6ND])
+
+#define MAX_RTR_SOLICITATION_DELAY	1	/* seconds */
+#define MAX_UNICAST_SOLICIT		3	/* 3 transmissions */
+
+#define MAX_REACHABLE_TIME		3600000	/* milliseconds */
+#define REACHABLE_TIME			30000	/* milliseconds */
+#define RETRANS_TIMER			1000	/* milliseconds */
+#define DELAY_FIRST_PROBE_TIME		5	/* seconds */
+
+#define IPV6ND_REACHABLE		(1 << 0)
+#define IPV6ND_ROUTER			(1 << 1)
 
 #ifdef INET6
-int ipv6rs_start(struct interface *);
-ssize_t ipv6rs_env(char **, const char *, const struct interface *);
-const struct ipv6_addr * ipv6rs_findprefix(const struct ipv6_addr *);
-int ipv6rs_addrexists(const struct ipv6_addr *);
-void ipv6rs_freedrop_ra(struct ra *, int);
-#define ipv6rs_free_ra(ra) ipv6rs_freedrop_ra((ra),  0)
-#define ipv6rs_drop_ra(ra) ipv6rs_freedrop_ra((ra),  1)
-ssize_t ipv6rs_free(struct interface *);
-void ipv6rs_expire(void *arg);
-int ipv6rs_has_ra(const struct interface *);
-void ipv6rs_handleifa(int, const char *, const struct in6_addr *, int);
-void ipv6rs_drop(struct interface *);
+void ipv6nd_startrs(struct interface *);
+ssize_t ipv6nd_env(char **, const char *, const struct interface *);
+int ipv6nd_addrexists(struct dhcpcd_ctx *, const struct ipv6_addr *);
+void ipv6nd_freedrop_ra(struct ra *, int);
+#define ipv6nd_free_ra(ra) ipv6nd_freedrop_ra((ra),  0)
+#define ipv6nd_drop_ra(ra) ipv6nd_freedrop_ra((ra),  1)
+ssize_t ipv6nd_free(struct interface *);
+void ipv6nd_expirera(void *arg);
+int ipv6nd_hasra(const struct interface *);
+int ipv6nd_hasradhcp(const struct interface *);
+void ipv6nd_handleifa(struct dhcpcd_ctx *, int,
+    const char *, const struct in6_addr *, int);
+void ipv6nd_drop(struct interface *);
+
+#ifdef HAVE_RTM_GETNEIGH
+void ipv6nd_neighbour(struct dhcpcd_ctx *, struct in6_addr *, int);
+#endif
 #else
-#define ipv6rs_start(a) {}
-#define ipv6rs_free(a)
-#define ipv6rs_has_ra(a) 0
-#define ipv6rs_drop(a)
+#define ipv6nd_startrs(a) {}
+#define ipv6nd_addrexists(a, b) (0)
+#define ipv6nd_free(a)
+#define ipv6nd_hasra(a) (0)
+#define ipv6nd_drop(a)
 #endif
 
 #endif
