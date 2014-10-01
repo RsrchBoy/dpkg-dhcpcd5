@@ -31,10 +31,6 @@
 #include <sys/utsname.h>
 
 #include <netinet/in.h>
-#ifdef __linux__
-#  define _LINUX_IN6_H
-#  include <linux/ipv6.h>
-#endif
 
 #include <ctype.h>
 #include <errno.h>
@@ -156,11 +152,11 @@ static size_t
 dhcp6_makevendor(struct dhcp6_option *o, const struct interface *ifp)
 {
 	const struct if_options *ifo;
-	size_t len;
+	size_t len, i;
 	uint8_t *p;
 	uint16_t u16;
 	uint32_t u32;
-	size_t vlen, i;
+	ssize_t vlen;
 	const struct vivco *vivco;
 	char vendor[VENDORCLASSID_MAX_LEN];
 
@@ -174,7 +170,10 @@ dhcp6_makevendor(struct dhcp6_option *o, const struct interface *ifp)
 		vlen = 0; /* silence bogus gcc warning */
 	} else {
 		vlen = dhcp_vendor(vendor, sizeof(vendor));
-		len += sizeof(uint16_t) + vlen;
+		if (vlen == -1)
+			vlen = 0;
+		else
+			len += sizeof(uint16_t) + (size_t)vlen;
 	}
 
 	if (len > UINT16_MAX) {
@@ -200,11 +199,11 @@ dhcp6_makevendor(struct dhcp6_option *o, const struct interface *ifp)
 				memcpy(p, vivco->data, vivco->len);
 				p += vivco->len;
 			}
-		} else {
+		} else if (vlen) {
 			u16 = htons(vlen);
 			memcpy(p, &u16, sizeof(u16));
 			p += sizeof(u16);
-			memcpy(p, vendor, vlen);
+			memcpy(p, vendor, (size_t)vlen);
 		}
 	}
 
@@ -642,9 +641,11 @@ dhcp6_makemessage(struct interface *ifp)
 	if (ifo->auth.options & DHCPCD_AUTH_SEND) {
 		auth_len = (size_t)dhcp_auth_encode(&ifo->auth,
 		    state->auth.token, NULL, 0, 6, type, NULL, 0);
-		if ((ssize_t)auth_len == -1)
+		if ((ssize_t)auth_len == -1) {
+			syslog(LOG_ERR, "%s: dhcp_auth_encode: %m",
+			    ifp->name);
 			auth_len = 0;
-		else if (auth_len> 0)
+		} else if (auth_len != 0)
 			len += sizeof(*o) + auth_len;
 	} else
 		auth_len = 0; /* appease GCC */
@@ -848,7 +849,7 @@ dhcp6_makemessage(struct interface *ifp)
 	}
 
 	/* This has to be the last option */
-	if (ifo->auth.options & DHCPCD_AUTH_SEND && auth_len > 0) {
+	if (ifo->auth.options & DHCPCD_AUTH_SEND && auth_len != 0) {
 		o = D6_NEXT_OPTION(o);
 		o->code = htons(D6_OPTION_AUTH);
 		o->len = htons(auth_len);
@@ -1042,13 +1043,14 @@ logsend:
 	    dhcp6_update_auth(ifp, state->send, state->send_len) == -1)
 	{
 		syslog(LOG_ERR, "%s: dhcp6_updateauth: %m", ifp->name);
-		return -1;
+		if (errno != ESRCH)
+			return -1;
 	}
 
 	ctx = ifp->ctx->ipv6;
 	dst.sin6_scope_id = ifp->index;
-	ctx->sndhdr.msg_name = (caddr_t)&dst;
-	ctx->sndhdr.msg_iov[0].iov_base = (caddr_t)state->send;
+	ctx->sndhdr.msg_name = (void *)&dst;
+	ctx->sndhdr.msg_iov[0].iov_base = state->send;
 	ctx->sndhdr.msg_iov[0].iov_len = state->send_len;
 
 	/* Set the outbound interface */
@@ -1154,6 +1156,21 @@ dhcp6_startrenew(void *arg)
 		syslog(LOG_ERR, "%s: dhcp6_makemessage: %m", ifp->name);
 	else
 		dhcp6_sendrenew(ifp);
+}
+
+int
+dhcp6_dadcompleted(const struct interface *ifp)
+{
+	const struct dhcp6_state *state;
+	const struct ipv6_addr *ap;
+
+	state = D6_CSTATE(ifp);
+	TAILQ_FOREACH(ap, &state->addrs, next) {
+		if (ap->flags & IPV6_AF_ADDED &&
+		    !(ap->flags & IPV6_AF_DADCOMPLETED))
+			return 0;
+	}
+	return 1;
 }
 
 static void
@@ -1474,7 +1491,7 @@ dhcp6_startexpire(void *arg)
 	dhcp6_freedrop_addrs(ifp, 1, NULL);
 	dhcp6_delete_delegates(ifp);
 	script_runreason(ifp, "EXPIRE6");
-	if (ipv6nd_hasradhcp(ifp))
+	if (ipv6nd_hasradhcp(ifp) || dhcp6_hasprefixdelegation(ifp))
 		dhcp6_startdiscover(ifp);
 	else
 		syslog(LOG_WARNING,
@@ -2041,7 +2058,9 @@ dhcp6_readlease(struct interface *ifp)
 	if (fd == -1)
 		goto ex;
 
-	if (state->expire != ND6_INFINITE_LIFETIME) {
+	if (!(ifp->ctx->options & DHCPCD_DUMPLEASE) &&
+	    state->expire != ND6_INFINITE_LIFETIME)
+	{
 		gettimeofday(&now, NULL);
 		if ((time_t)state->expire < now.tv_sec - st.st_mtime) {
 			syslog(LOG_DEBUG,"%s: discarding expired lease",
@@ -2199,6 +2218,39 @@ dhcp6_ifdelegateaddr(struct interface *ifp, struct ipv6_addr *prefix,
 }
 
 static void
+dhcp6_script_try_run(struct interface *ifp)
+{
+	struct dhcp6_state *state;
+	struct ipv6_addr *ap;
+	int completed;
+
+	state = D6_STATE(ifp);
+	if (!TAILQ_FIRST(&state->addrs))
+		return;
+
+	completed = 1;
+	/* If all addresses have completed DAD run the script */
+	TAILQ_FOREACH(ap, &state->addrs, next) {
+		if (ap->flags & IPV6_AF_ONLINK) {
+			if (!(ap->flags & IPV6_AF_DADCOMPLETED) &&
+			    ipv6_findaddr(ap->iface, &ap->addr))
+				ap->flags |= IPV6_AF_DADCOMPLETED;
+			if ((ap->flags & IPV6_AF_DADCOMPLETED) == 0) {
+				completed = 0;
+				break;
+			}
+		}
+	}
+	if (completed) {
+		script_runreason(ifp, state->reason);
+		dhcpcd_daemonise(ifp->ctx);
+	} else
+		syslog(LOG_DEBUG,
+		    "%s: waiting for DHCPv6 DAD to complete",
+		    ifp->name);
+}
+
+static void
 dhcp6_delegate_prefix(struct interface *ifp)
 {
 	struct if_options *ifo;
@@ -2297,6 +2349,7 @@ dhcp6_delegate_prefix(struct interface *ifp)
 		if (k && !carrier_warned) {
 			ifd_state = D6_STATE(ifd);
 			ipv6_addaddrs(&ifd_state->addrs);
+			dhcp6_script_try_run(ifd);
 		}
 	}
 }
@@ -2361,6 +2414,7 @@ dhcp6_find_delegates(struct interface *ifp)
 		state->state = DH6S_DELEGATED;
 		ipv6_addaddrs(&state->addrs);
 		ipv6_buildroutes(ifp->ctx);
+		dhcp6_script_try_run(ifp);
 	}
 	return k;
 }
@@ -2412,7 +2466,7 @@ dhcp6_handledata(void *arg)
 	if (bytes == -1 || bytes == 0) {
 		syslog(LOG_ERR, "recvmsg: %m");
 		close(ctx->dhcp_fd);
-		eloop_event_delete(dhcpcd_ctx->eloop, ctx->dhcp_fd);
+		eloop_event_delete(dhcpcd_ctx->eloop, ctx->dhcp_fd, 0);
 		ctx->dhcp_fd = -1;
 		return;
 	}
@@ -2770,13 +2824,13 @@ recv:
 		if (state->renew == 0) {
 			if (state->expire == ND6_INFINITE_LIFETIME)
 				state->renew = ND6_INFINITE_LIFETIME;
-			else
+			else if (state->lowpl != ND6_INFINITE_LIFETIME)
 				state->renew = (uint32_t)(state->lowpl * 0.5);
 		}
 		if (state->rebind == 0) {
 			if (state->expire == ND6_INFINITE_LIFETIME)
 				state->rebind = ND6_INFINITE_LIFETIME;
-			else
+			else if (state->lowpl != ND6_INFINITE_LIFETIME)
 				state->rebind = (uint32_t)(state->lowpl * 0.8);
 		}
 		break;
@@ -2810,7 +2864,7 @@ recv:
 		if (state->rebind && state->rebind != ND6_INFINITE_LIFETIME)
 			eloop_timeout_add_sec(ifp->ctx->eloop,
 			    (time_t)state->rebind, dhcp6_startrebind, ifp);
-		if (state->expire && state->expire != ND6_INFINITE_LIFETIME)
+		if (state->expire != ND6_INFINITE_LIFETIME)
 			eloop_timeout_add_sec(ifp->ctx->eloop,
 			    (time_t)state->expire, dhcp6_startexpire, ifp);
 
@@ -2826,29 +2880,12 @@ recv:
 			    "%s: renew in %"PRIu32" seconds,"
 			    " rebind in %"PRIu32" seconds",
 			    ifp->name, state->renew, state->rebind);
+		else if (state->expire == 0)
+			syslog(has_new ? LOG_INFO : LOG_DEBUG,
+			    "%s: will expire", ifp->name);
 		ipv6_buildroutes(ifp->ctx);
 		dhcp6_writelease(ifp);
-
-		len = 1;
-		/* If all addresses have completed DAD run the script */
-		TAILQ_FOREACH(ap, &state->addrs, next) {
-			if (ap->flags & IPV6_AF_ONLINK) {
-				if (!(ap->flags & IPV6_AF_DADCOMPLETED) &&
-				    ipv6_findaddr(ap->iface, &ap->addr))
-					ap->flags |= IPV6_AF_DADCOMPLETED;
-				if ((ap->flags & IPV6_AF_DADCOMPLETED) == 0) {
-					len = 0;
-					break;
-				}
-			}
-		}
-		if (len) {
-			script_runreason(ifp, state->reason);
-			dhcpcd_daemonise(ifp->ctx);
-		} else
-			syslog(LOG_DEBUG,
-			    "%s: waiting for DHCPv6 DAD to complete",
-			    ifp->name);
+		dhcp6_script_try_run(ifp);
 	}
 
 	if (ifp->ctx->options & DHCPCD_TEST ||
@@ -2924,7 +2961,8 @@ dhcp6_open(struct dhcpcd_ctx *dctx)
 	    &n, sizeof(n)) == -1)
 		goto errexit;
 
-	eloop_event_add(dctx->eloop, ctx->dhcp_fd, dhcp6_handledata, dctx);
+	eloop_event_add(dctx->eloop, ctx->dhcp_fd,
+	    dhcp6_handledata, dctx, NULL, NULL);
 	return 0;
 
 errexit:
@@ -3102,7 +3140,9 @@ dhcp6_freedrop(struct interface *ifp, int drop, const char *reason)
 
 	ifpx = dhcp6_findpfxdlgif(ifp);
 	if (ifpx) {
-		dhcp6_freedrop(ifpx, drop, reason);
+		/* Read the below comment why we need to force
+		 * a drop here */
+		dhcp6_freedrop(ifpx, 1, reason);
 		TAILQ_REMOVE(ifp->ctx->ifaces, ifpx, next);
 		if_free(ifpx);
 	}
@@ -3178,7 +3218,7 @@ dhcp6_freedrop(struct interface *ifp, int drop, const char *reason)
 	}
 	if (ifp == NULL && ctx->ipv6) {
 		if (ctx->ipv6->dhcp_fd != -1) {
-			eloop_event_delete(ctx->eloop, ctx->ipv6->dhcp_fd);
+			eloop_event_delete(ctx->eloop, ctx->ipv6->dhcp_fd, 0);
 			close(ctx->ipv6->dhcp_fd);
 			ctx->ipv6->dhcp_fd = -1;
 		}
@@ -3230,6 +3270,13 @@ dhcp6_env(char **env, const char *prefix, const struct interface *ifp,
 	char *pfx;
 	uint32_t en;
 	const struct dhcpcd_ctx *ctx;
+	const struct dhcp6_state *state;
+	const struct ipv6_addr *ap;
+	char *v, *val;
+
+	n = 0;
+	if (m == NULL)
+		goto delegated;
 
 	if (len < sizeof(*m)) {
 		/* Should be impossible with guards at packet in
@@ -3238,7 +3285,6 @@ dhcp6_env(char **env, const char *prefix, const struct interface *ifp,
 		return -1;
 	}
 
-	n = 0;
 	ifo = ifp->options;
 	ctx = ifp->ctx;
 
@@ -3320,6 +3366,35 @@ dhcp6_env(char **env, const char *prefix, const struct interface *ifp,
 		}
 	}
 	free(pfx);
+
+delegated:
+        /* Needed for Delegated Prefixes */
+	state = D6_CSTATE(ifp);
+	i = 0;
+	TAILQ_FOREACH(ap, &state->addrs, next) {
+		if (ap->delegating_iface) {
+                       	i += strlen(ap->saddr) + 1;
+		}
+	}
+	if (env && i) {
+		i += strlen(prefix) + strlen("_dhcp6_prefix=");
+                v = val = env[n] = malloc(i);
+		if (v == NULL) {
+			syslog(LOG_ERR, "%s: %m", __func__);
+			return -1;
+		}
+		v += snprintf(val, i, "%s_dhcp6_prefix=", prefix);
+		TAILQ_FOREACH(ap, &state->addrs, next) {
+			if (ap->delegating_iface) {
+				strcpy(v, ap->saddr);
+				v += strlen(ap->saddr);
+				*v++ = ' ';
+			}
+		}
+		*--v = '\0';
+        }
+	if (i)
+		n++;
 
 	return (ssize_t)n;
 }
