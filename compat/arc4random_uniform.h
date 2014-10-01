@@ -1,6 +1,6 @@
 /*
  * dhcpcd - DHCP client daemon
- * Copyright (c) 2006-2013 Roy Marples <roy@marples.name>
+ * Copyright (c) 2006-2014 Roy Marples <roy@marples.name>
  * All rights reserved
 
  * Redistribution and use in source and binary forms, with or without
@@ -25,13 +25,10 @@
  * SUCH DAMAGE.
  */
 
-#ifndef SCRIPT_H
-#define SCRIPT_H
+#ifndef ARC4RANDOM_UNIFORM_H
+#define ARC4RANDOM_UNIFORM_H
 
-#include "control.h"
+#include <stdint.h>
 
-void if_printoptions(void);
-int send_interface(struct fd_list *, const struct interface *);
-int script_runreason(const struct interface *, const char *);
-
+uint32_t arc4random_uniform(uint32_t);
 #endif

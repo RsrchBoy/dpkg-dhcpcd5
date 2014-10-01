@@ -1,3 +1,9 @@
+dhcpcd5 (6.4.7) UNRELEASED; urgency=medium
+
+  * Imported Upstream version 6.4.7.
+
+ -- Chris Weyl <cweyl@alumni.drew.edu>  Wed, 01 Oct 2014 00:29:47 -0700
+
 dhcpcd5 (6.4.3~14.04~ppa1) trusty; urgency=medium
 
   * Build for trusty.

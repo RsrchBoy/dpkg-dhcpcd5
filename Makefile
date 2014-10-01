@@ -32,7 +32,6 @@ CLEANFILES=	dhcpcd.conf.5 dhcpcd.8 dhcpcd-run-hooks.8
 SCRIPTS=	dhcpcd-run-hooks
 SCRIPTSDIR=	${LIBEXECDIR}
 CLEANFILES+=	dhcpcd-run-hooks
-CLEANFILES+=	.depend
 
 FILES=		dhcpcd.conf
 FILESDIR=	${SYSCONFDIR}
@@ -91,8 +90,8 @@ dhcpcd-embedded.c: genembedc dhcpcd-definitions.conf
 
 if-options.c: dhcpcd-embedded.h
 
-.depend: ${SRCS} ${COMPAT_SRCS}
-	${CC} ${CPPFLAGS} -MM ${SRCS} ${COMPAT_SRCS} > .depend
+.depend: ${SRCS} ${COMPAT_SRCS} ${CRYPT_SRCS}
+	${CC} ${CPPFLAGS} -MM ${SRCS} ${COMPAT_SRCS} ${CRYPT_SRCS} > .depend
 
 depend: .depend
 
@@ -136,7 +135,7 @@ clean:
 	for x in ${SUBDIRS} test; do cd $$x; ${MAKE} $@; cd ..; done
 
 distclean: clean
-	rm -f .depend config.h config.mk
+	rm -f .depend config.h config.mk config.log
 
 dist:
 	fossil tarball --name ${DISTPREFIX} ${FOSSILID} ${DISTFILEGZ}

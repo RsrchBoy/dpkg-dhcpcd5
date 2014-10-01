@@ -36,6 +36,11 @@
 #include <unistd.h>
 
 #include "config.h"
+
+#ifdef HAVE_VIS_H
+#include <vis.h>
+#endif
+
 #include "common.h"
 #include "dhcp-common.h"
 #include "dhcp.h"
@@ -63,7 +68,7 @@ vivso_find(uint32_t iana_en, const void *arg)
 	return NULL;
 }
 
-size_t
+ssize_t
 dhcp_vendor(char *str, size_t len)
 {
 	struct utsname utn;
@@ -71,17 +76,21 @@ dhcp_vendor(char *str, size_t len)
 	int l;
 
 	if (uname(&utn) != 0)
-		return (size_t)snprintf(str, len, "%s-%s",
+		return (ssize_t)snprintf(str, len, "%s-%s",
 		    PACKAGE, VERSION);
 	p = str;
 	l = snprintf(p, len,
 	    "%s-%s:%s-%s:%s", PACKAGE, VERSION,
 	    utn.sysname, utn.release, utn.machine);
+	if (l == -1 || (size_t)(l + 1) > len)
+		return -1;
 	p += l;
 	len -= (size_t)l;
 	l = if_machinearch(p, len);
+	if (l == -1 || (size_t)(l + 1) > len)
+		return -1;
 	p += l;
-	return (size_t)(p - str);
+	return p - str;
 }
 
 int
@@ -141,11 +150,9 @@ make_option_mask(const struct dhcp_opt *dopts, size_t dopts_len,
 			return -1;
 		}
 		if (add == 1 || add == 2)
-			add_option_mask(mask,
-			    opt->option);
+			add_option_mask(mask, opt->option);
 		else
-			del_option_mask(mask,
-			    opt->option);
+			del_option_mask(mask, opt->option);
 	}
 	free(o);
 	return 0;
@@ -231,6 +238,10 @@ decode_rfc3397(char *out, size_t len, const uint8_t *p, size_t pl)
 			if (ltype == 0x80 || ltype == 0x40)
 				return -1;
 			else if (ltype == 0xc0) { /* pointer */
+				if (q == e) {
+					errno = ERANGE;
+					return -1;
+				}
 				l = (l & 0x3f) << 8;
 				l |= *q++;
 				/* save source of first jump. */
@@ -248,6 +259,10 @@ decode_rfc3397(char *out, size_t len, const uint8_t *p, size_t pl)
 				}
 			} else {
 				/* straightforward name segment, add with '.' */
+				if (q + l > e) {
+					errno = ERANGE;
+					return -1;
+				}
 				count += l + 1;
 				if (out) {
 					if (l + 1 > len) {
@@ -281,14 +296,28 @@ decode_rfc3397(char *out, size_t len, const uint8_t *p, size_t pl)
 	return (ssize_t)count;
 }
 
+/*
+ * Escape these characters to avoid any nastiness passing to a POSIX shell.
+ * See IEEE Std 1003.1, 2004 Shell Command Language, 2.2 Quoting
+ * space is not escaped.
+ */
+#define ESCAPE_CHARS	"|&;<>()$`\\\"'\t\n"
+
+/*
+ * Prints a chunk of data to a string.
+ * Escapes some characters defnined above to try and avoid any loopholes
+ * in the shell we're passing to.
+ * Any non visible characters are escaped as an octal number.
+ */
 ssize_t
 print_string(char *s, size_t len, const uint8_t *data, size_t dl)
 {
 	uint8_t c;
 	const uint8_t *e, *p;
-	ssize_t bytes = 0;
-	ssize_t r;
+	size_t bytes;
+	char v[5], *vp, *ve;
 
+	bytes = 0;
 	e = data + dl;
 	while (data < e) {
 		c = *data++;
@@ -300,51 +329,25 @@ print_string(char *s, size_t len, const uint8_t *data, size_t dl)
 			if (p == e)
 				break;
 		}
-		if (!isascii(c) || !isprint(c)) {
-			if (s) {
-				if (len < 5) {
-					errno = ENOBUFS;
-					return -1;
-				}
-				r = snprintf(s, len, "\\%03o", c);
-				len -= (size_t)r;
-				bytes += r;
-				s += r;
-			} else
-				bytes += 4;
-			continue;
+		ve = svis(v, c, VIS_CSTYLE | VIS_OCTAL,
+		    data <= e ? *data : 0, ESCAPE_CHARS);
+		if (s && len < (size_t)(ve - v) + 1) {
+			errno = ENOBUFS;
+			return -1;
 		}
-		switch (c) {
-		case '"':  /* FALLTHROUGH */
-		case '\'': /* FALLTHROUGH */
-		case '$':  /* FALLTHROUGH */
-		case '`':  /* FALLTHROUGH */
-		case '\\': /* FALLTHROUGH */
-		case '|':  /* FALLTHROUGH */
-		case '&':
-			if (s) {
-				if (len < 3) {
-					errno = ENOBUFS;
-					return -1;
-				}
-				*s++ = '\\';
-				len--;
-			}
-			bytes++;
-			break;
-		}
+		bytes += (size_t)(ve - v);
 		if (s) {
-			*s++ = (char)c;
-			len--;
+			vp = v;
+			while (vp != ve)
+				*s++ = *vp++;
 		}
-		bytes++;
 	}
 
 	/* NULL */
 	if (s)
 		*s = '\0';
 	bytes++;
-	return bytes;
+	return (ssize_t)bytes;
 }
 
 #define ADDRSZ		4
