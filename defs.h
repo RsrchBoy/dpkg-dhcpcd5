@@ -28,7 +28,7 @@
 #define CONFIG_H
 
 #define PACKAGE			"dhcpcd"
-#define VERSION			"6.4.3"
+#define VERSION			"6.4.7"
 
 #ifndef CONFIG
 # define CONFIG			SYSCONFDIR "/" PACKAGE ".conf"
@@ -56,6 +56,9 @@
 #endif
 #ifndef CONTROLSOCKET
 # define CONTROLSOCKET		RUNDIR "/" PACKAGE "%s%s.sock"
+#endif
+#ifndef UNPRIVSOCKET
+# define UNPRIVSOCKET		RUNDIR "/" PACKAGE ".unpriv.sock"
 #endif
 #ifndef RDM_MONOFILE
 # define RDM_MONOFILE		DBDIR "/" PACKAGE "-rdm.monotonic"
