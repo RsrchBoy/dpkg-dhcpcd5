@@ -33,7 +33,7 @@
 
 #include <netinet/in.h>
 
-#ifdef __linux__
+#if defined(__linux__) && defined(__GLIBC__)
 #  define _LINUX_IN6_H
 #  include <linux/ipv6.h>
 #endif
@@ -199,6 +199,7 @@ void ipv6_free_ll_callbacks(struct interface *);
 int ipv6_start(struct interface *);
 void ipv6_free(struct interface *);
 void ipv6_ctxfree(struct dhcpcd_ctx *);
+int ipv6_routedeleted(struct dhcpcd_ctx *, const struct rt6 *);
 int ipv6_removesubnet(struct interface *, struct ipv6_addr *);
 void ipv6_buildroutes(struct dhcpcd_ctx *);
 

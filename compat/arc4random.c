@@ -54,7 +54,7 @@ static struct arc4_stream rs = { .i = 0xff, .j = 0, .s = { S256 },
 #undef S64
 #undef S256
 
-static inline void
+static void
 arc4_addrandom(struct arc4_stream *as, unsigned char *dat, int datlen)
 {
 	int n;
@@ -71,7 +71,7 @@ arc4_addrandom(struct arc4_stream *as, unsigned char *dat, int datlen)
 	as->j = as->i;
 }
 
-static inline uint8_t
+static uint8_t
 arc4_getbyte(struct arc4_stream *as)
 {
 	uint8_t si, sj;
@@ -85,7 +85,7 @@ arc4_getbyte(struct arc4_stream *as)
 	return (as->s[(si + sj) & 0xff]);
 }
 
-static inline uint32_t
+static uint32_t
 arc4_getword(struct arc4_stream *as)
 {
 	uint32_t val;
@@ -129,7 +129,7 @@ arc4_stir(struct arc4_stream *as)
 	as->count = 1600000;
 }
 
-static inline void
+static void
 arc4_stir_if_needed(struct arc4_stream *as)
 {
 	pid_t pid;
@@ -149,38 +149,3 @@ arc4random()
 	arc4_stir_if_needed(&rs);
 	return arc4_getword(&rs);
 }
-
-/*
- * Calculate a uniformly distributed random number less than upper_bound
- * avoiding "modulo bias".
- *
- * Uniformity is achieved by generating new random numbers until the one
- * returned is outside the range [0, 2**32 % upper_bound).  This
- * guarantees the selected random number will be inside
- * [2**32 % upper_bound, 2**32) which maps back to [0, upper_bound)
- * after reduction modulo upper_bound.
- */
-uint32_t
-arc4random_uniform(uint32_t upper_bound)
-{
-	uint32_t r, min;
-
-	if (upper_bound < 2)
-		return 0;
-
-	/* 2**32 % x == (2**32 - x) % x */
-	min = -upper_bound % upper_bound;
-
-	/*
-	 * This could theoretically loop forever but each retry has
-	 * p > 0.5 (worst case, usually far better) of selecting a
-	 * number inside the range we need, so it should rarely need
-	 * to re-roll.
-	 */
-	do
-		r = arc4random();
-	while (r < min);
-
-	return r % upper_bound;
-}
-

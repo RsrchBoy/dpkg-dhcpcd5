@@ -2,6 +2,7 @@
 # Try and be like autotools configure, but without autotools
 
 echo "configure args: $*"
+exec 3>config.log
 
 # Ensure that we do not inherit these from env
 HOOKSET=false
@@ -14,8 +15,8 @@ STRLCPY=
 UDEV=
 OS=
 BUILD=
-BUILDCC=
 HOST=
+HOSTCC=
 TARGET=
 DEBUG=
 FORK=
@@ -70,6 +71,7 @@ for x do
 	--without-md5) MD5=no;;
 	--without-sha2) SHA2=no;;
 	--without-sha256) SHA2=no;;
+	--without-svis) SVIS=no;;
 	--without-dev) DEV=no;;
 	--without-udev) UDEV=no;;
 	--serviceexists) SERVICEEXISTS=$var;;
@@ -243,16 +245,14 @@ echo "LIBDIR=		$LIBDIR" >>$CONFIG_MK
 echo "MANDIR=		$MANDIR" >>$CONFIG_MK
 
 # Always obey CC.
-# However, if CC is not specified and we are given GNU style
-# --host or --build targets the expectation is we try and match that
-# to a compiler.
 if [ -n "$CC" ]; then
 	HOSTCC=
 else
 	CC=cc
 	_COMPILERS="cc clang gcc pcc icc"
 fi
-if [ -n "$HOSTCC" ]; then
+# Only look for a cross compiler if --host and --build are not the same
+if [ -n "$HOSTCC" -a "$BUILD" != "$HOST" ]; then
 	for _CC in $_COMPILERS; do
 		_CC=$(_which "$HOSTCC$_CC")
 		if [ -x "$_CC" ]; then
@@ -270,24 +270,6 @@ if ! type "$CC" >/dev/null 2>&1; then
 		fi
 	done
 fi
-
-echo "Using compiler .. $CC"
-cat <<EOF >_test.c
-int main(void) {
-	return 0;
-}
-EOF
-_CC=false
-if $CC _test.c -o _test >/dev/null 2>&1; then
-	[ -x _test ] && _CC=true
-fi
-rm -f _test.c _test
-if ! $_CC; then
-	echo "$CC does not create executables"
-	exit 1
-fi
-[ "$CC" != cc ] && echo "CC=	$CC" >>$CONFIG_MK
-$CC --version | $SED -e '1!d'
 
 # Set to blank, then append user config
 # We do this so our SED call to append to XCC remains portable
@@ -382,7 +364,9 @@ fi
 case "$OS" in
 linux*)
 	echo "CPPFLAGS+=	-D_BSD_SOURCE -D_XOPEN_SOURCE=700" >>$CONFIG_MK
-	echo "DHCPCD_SRCS+=	if-linux.c if-linux-wireless.c" >>$CONFIG_MK
+	# glibc-2.20
+	echo "CPPFLAGS+=	-D_DEFAULT_SOURCE" >>$CONFIG_MK
+	echo "DHCPCD_SRCS+=	if-linux.c" >>$CONFIG_MK
 	;;
 kfreebsd*)
 	echo "CPPFLAGS+=	-D_GNU_SOURCE" >>$CONFIG_MK
@@ -415,9 +399,51 @@ if [ -z "$INET6" -o "$INET6" = yes ]; then
 	echo "DHCPCD_SRCS+=	ipv6.c ipv6nd.c dhcp6.c" >>$CONFIG_MK
 fi
 
+echo "Using compiler .. $CC"
 # Add CPPFLAGS and CFLAGS to CC for testing features
 XCC="$CC `$SED -n -e 's/CPPFLAGS+=*\(.*\)/\1/p' $CONFIG_MK`"
 XCC="$XCC `$SED -n -e 's/CFLAGS+=*\(.*\)/\1/p' $CONFIG_MK`"
+
+# Now test we can use the compiler with our CFLAGS
+cat <<EOF >_test.c
+int main(void) {
+	return 0;
+}
+EOF
+_CC=false
+if $XCC _test.c -o _test >/dev/null 2>&3; then
+	[ -x _test ] && _CC=true
+fi
+rm -f _test.c _test
+if ! $_CC; then
+	echo "$CC does not create executables"
+	exit 1
+fi
+[ "$CC" != cc ] && echo "CC=	$CC" >>$CONFIG_MK
+$CC --version | $SED -e '1!d'
+
+if [ "$OS" = linux ]; then
+	printf "Testing for nl80211 ... "
+	cat <<EOF >_nl80211.c
+#include <linux/nl80211.h>
+int main(void) {
+	return 0;
+}
+EOF
+	if $XCC _nl80211.c -o _nl80211 2>&3; then
+		echo "yes"
+		echo "#define HAVE_NL80211_H" >>$CONFIG_H
+	else
+		echo "no"
+	fi
+	rm -f _nl80211.c _nl80211
+
+	# Even though we have nl80211, we only use it as a fallback
+	# because it's currently possible to configure a kernel
+	# where the SSID associated to won't be reported by nl80211
+	# but will be via WEXT.
+	echo "DHCPCD_SRCS+=	if-linux-wext.c" >>$CONFIG_MK
+fi
 
 abort=false
 # We require the libc to support non standard functions, like getifaddrs
@@ -430,9 +456,9 @@ int main(void) {
 	return getifaddrs(&ifap);
 }
 EOF
-if $XCC _getifaddrs.c -o _getifaddrs 2>/dev/null; then
+if $XCC _getifaddrs.c -o _getifaddrs 2>&3; then
 	echo "yes"
-elif $XCC _getifaddrs.c -o _getifaddrs -lsocket 2>/dev/null; then
+elif $XCC _getifaddrs.c -o _getifaddrs -lsocket 2>&3; then
 	echo "yes (-lsocket)"
 	echo "LDADD+=		-lsocket" >>$CONFIG_MK
 else
@@ -451,9 +477,9 @@ int main(void) {
 	return clock_gettime(CLOCK_MONOTONIC, &ts);
 }
 EOF
-if $XCC _clock_gettime.c -o _clock_gettime 2>/dev/null; then
+if $XCC _clock_gettime.c -o _clock_gettime 2>&3; then
 	echo "yes"
-elif $XCC _clock_gettime.c -lrt -o _clock_gettime 2>/dev/null; then
+elif $XCC _clock_gettime.c -lrt -o _clock_gettime 2>&3; then
 	echo "yes (-lrt)"
 	echo "LDADD+=		-lrt" >>$CONFIG_MK
 else
@@ -474,9 +500,9 @@ int main(void) {
 	return 0;
 }
 EOF
-if $XCC _inet_ntoa.c -o _inet_ntoa 2>/dev/null; then
+if $XCC _inet_ntoa.c -o _inet_ntoa 2>&3; then
 	echo "yes"
-elif $XCC _inet_ntoa.c -lnsl -o _inet_ntoa 2>/dev/null; then
+elif $XCC _inet_ntoa.c -lnsl -o _inet_ntoa 2>&3; then
 	echo "yes (-lnsl)"
 	echo "LDADD+=		-lnsl" >>$CONFIG_MK
 else
@@ -496,7 +522,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _arc4random.c -o _arc4random 2>/dev/null; then
+	if $XCC _arc4random.c -o _arc4random 2>&3; then
 		ARC4RANDOM=yes
 	else
 		ARC4RANDOM=no
@@ -509,6 +535,28 @@ if [ "$ARC4RANDOM" = no ]; then
 	echo "#include \"compat/arc4random.h\"" >>$CONFIG_H
 fi
 
+if [ -z "$ARC4RANDOM_UNIFORM" ]; then
+	printf "Testing for arc4random_uniform ... "
+	cat <<EOF >_arc4random_uniform.c
+#include <stdlib.h>
+int main(void) {
+	arc4random_uniform(100);
+	return 0;
+}
+EOF
+	if $XCC _arc4random_uniform.c -o _arc4random_uniform 2>&3; then
+		ARC4RANDOM_UNIFORM=yes
+	else
+		ARC4RANDOM_UNIFORM=no
+	fi
+	echo "$ARC4RANDOM"
+	rm -f _arc4random_uniform.c _arc4random_uniform
+fi
+if [ "$ARC4RANDOM_UNIFORM" = no ]; then
+	echo "COMPAT_SRCS+=	compat/arc4random_uniform.c" >>$CONFIG_MK
+	echo "#include \"compat/arc4random_uniform.h\"" >>$CONFIG_H
+fi
+
 if [ -z "$CLOSEFROM" ]; then
 	printf "Testing for closefrom ... "
 	cat <<EOF >_closefrom.c
@@ -518,7 +566,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _closefrom.c -o _closefrom 2>/dev/null; then
+	if $XCC _closefrom.c -o _closefrom 2>&3; then
 		CLOSEFROM=yes
 	else
 		CLOSEFROM=no
@@ -543,7 +591,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _getline.c -o _getline 2>/dev/null; then
+	if $XCC _getline.c -o _getline 2>&3; then
 		GETLINE=yes
 	else
 		GETLINE=no
@@ -567,7 +615,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _strlcpy.c -o _strlcpy 2>/dev/null; then
+	if $XCC _strlcpy.c -o _strlcpy 2>&3; then
 		STRLCPY=yes
 	else
 		STRLCPY=no
@@ -580,6 +628,31 @@ if [ "$STRLCPY" = no ]; then
 	echo "#include		\"compat/strlcpy.h\"" >>$CONFIG_H
 fi
 
+if [ -z "$SVIS" ]; then
+	printf "Testing for svis ... "
+	cat <<EOF >_svis.c
+#include <vis.h>
+int main(void) {
+	char s[10];
+	svis(s, 1, 2, 3, s);
+	return 0;
+}
+EOF
+	if $XCC _svis.c -o _svis 2>&3; then
+		SVIS=yes
+	else
+		SVIS=no
+	fi
+	echo "$SVIS"
+	rm -f _svis.c _svis
+fi
+if [ "$SVIS" = no ]; then
+	echo "COMPAT_SRCS+=	compat/svis.c" >>$CONFIG_MK
+	echo "#include		\"compat/svis.h\"" >>$CONFIG_H
+else
+	echo "#define HAVE_VIS_H" >>$CONFIG_H
+fi
+
 if [ -z "$DPRINTF" ]; then
 	printf "Testing for dprintf ... "
 	cat <<EOF >_dprintf.c
@@ -588,7 +661,7 @@ int main(void) {
 	return dprintf(0, "%d", 0);
 }
 EOF
-	if $XCC _dprintf.c -o _dprintf 2>/dev/null; then
+	if $XCC _dprintf.c -o _dprintf 2>&3; then
 		DPRINTF=yes
 	else
 		DPRINTF=no
@@ -612,7 +685,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _queue.c -o _queue 2>/dev/null; then
+	if $XCC _queue.c -o _queue 2>&3; then
 		TAILQ_FOREACH_SAFE=yes
 	else
 		TAILQ_FOREACH_SAFE=no
@@ -631,7 +704,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _queue.c -o _queue 2>/dev/null; then
+	if $XCC _queue.c -o _queue 2>&3; then
 		TAILQ_CONCAT=yes
 	else
 		TAILQ_CONCAT=no
@@ -653,7 +726,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _posix_spawn.c -o _posix_spawn 2>/dev/null; then
+	if $XCC _posix_spawn.c -o _posix_spawn 2>&3; then
 		case "$OS" in
 		openbsd*) printf "broken OpenBSD ... "; POSIX_SPAWN=no;;
 		*) POSIX_SPAWN=yes;;
@@ -682,7 +755,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _pollts.c -o _pollts 2>/dev/null; then
+	if $XCC _pollts.c -o _pollts 2>&3; then
 		POLLTS=yes
 	else
 		POLLTS=no
@@ -700,7 +773,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _ppoll.c -o _ppoll 2>/dev/null; then
+	if $XCC _ppoll.c -o _ppoll 2>&3; then
 		POLLTS=ppoll
 		echo "yes"
 	else
@@ -719,7 +792,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _pselect.c -o _pselect 2>/dev/null; then
+	if $XCC _pselect.c -o _pselect 2>&3; then
 		POLLTS=pselect
 		echo "yes"
 	else
@@ -753,7 +826,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _log_perror.c -o _log_perror 2>/dev/null; then
+	if $XCC _log_perror.c -o _log_perror 2>&3; then
 		LOG_PERROR=yes
 	else
 		LOG_PERROR=no
@@ -776,7 +849,7 @@ int main(void) {
 	be64enc(NULL, 0);
 }
 EOF
-	if $XCC _be64enc.c -o _be64enc 2>/dev/null; then
+	if $XCC _be64enc.c -o _be64enc 2>&3; then
 		BE64ENC=yes
 	else
 		BE64ENC=no
@@ -807,9 +880,9 @@ EOF
 	else
 		set -- $(ls /lib/libmd.so.* 2>/dev/null)
 	fi
-	if $XCC _md5.c -o _md5 2>/dev/null; then
+	if $XCC _md5.c -o _md5 2>&3; then
 		MD5=yes
-	elif [ -e "$1" ] && $XCC _md5.c -lmd -o _md5 2>/dev/null; then
+	elif [ -e "$1" ] && $XCC _md5.c -lmd -o _md5 2>&3; then
 		MD5="yes (-lmd)"
 		MD5_LIB=-lmd
 	else
@@ -862,9 +935,9 @@ EOF
 	else
 		set -- $(ls /lib/libmd.so.* 2>/dev/null)
 	fi
-	if $XCC _sha256.c -o _sha256 2>/dev/null; then
+	if $XCC _sha256.c -o _sha256 2>&3; then
 		SHA2=yes
-	elif [ -e "$1" ] && $XCC _sha256.c -lmd -o _sha256 2>/dev/null; then
+	elif [ -e "$1" ] && $XCC _sha256.c -lmd -o _sha256 2>&3; then
 		SHA2="yes (-lmd)"
 		SHA2_LIB=-lmd
 	else
@@ -893,10 +966,10 @@ EOF
 		else
 			set -- $(ls /lib/libmd.so.* 2>/dev/null)
 		fi
-		if $XCC	_sha256.c -o _sha256 2>/dev/null; then
+		if $XCC	_sha256.c -o _sha256 2>&3; then
 			SHA2=yes
 			SHA2_RENAMED=yes
-		elif [ -e "$1" ] && $XCC _sha256.c -lmd -o _sha256 2>/dev/null
+		elif [ -e "$1" ] && $XCC _sha256.c -lmd -o _sha256 2>&3
 		then
 			SHA2="yes (-lmd)"
 			SHA2_LIB=-lmd
@@ -924,8 +997,10 @@ fi
 
 if [ "$DEV" != no -a "$UDEV" != no ]; then
 	printf "Checking for libudev ... "
-	LIBUDEV_CFLAGS=$(pkg-config --cflags libudev 2>/dev/null)
-	LIBUDEV_LIBS=$(pkg-config --libs libudev 2>/dev/null)
+	if type pkg-config >/dev/null 2>&1; then
+		LIBUDEV_CFLAGS=$(pkg-config --cflags libudev 2>&3)
+		LIBUDEV_LIBS=$(pkg-config --libs libudev 2>&3)
+	fi
 fi
 if [ "$DEV" != no -a "$UDEV" != no -a -n "$LIBUDEV_LIBS" ]; then
 	echo "yes"
@@ -945,7 +1020,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC $LIBUDEV_CFLAGS _udev.c -o _udev $LIBUDEV_LIBS 2>/dev/null
+	if $XCC $LIBUDEV_CFLAGS _udev.c -o _udev $LIBUDEV_LIBS 2>&3
 	then
 		echo "yes"
 	else
@@ -963,7 +1038,7 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC $LIBUDEV_CFLAGS _udev.c -o _udev $LIBUDEV_LIBS 2>/dev/null
+	if $XCC $LIBUDEV_CFLAGS _udev.c -o _udev $LIBUDEV_LIBS 2>&3
 	then
 		echo "yes"
 	else
@@ -989,9 +1064,9 @@ int main(void) {
 	return 0;
 }
 EOF
-	if $XCC _dlopen.c -o _dlopen 2>/dev/null; then
+	if $XCC _dlopen.c -o _dlopen 2>&3; then
 		echo "yes"
-	elif $XCC _dlopen.c -ldl -o _dlopen 2>/dev/null; then
+	elif $XCC _dlopen.c -ldl -o _dlopen 2>&3; then
 		echo "yes (-ldl)"
 		echo "LDADD+=		-ldl" >>$CONFIG_MK
 	else

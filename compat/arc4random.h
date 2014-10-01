@@ -31,5 +31,4 @@
 #include <stdint.h>
 
 uint32_t arc4random(void);
-uint32_t arc4random_uniform(uint32_t);
 #endif
