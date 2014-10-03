@@ -18,10 +18,6 @@ OBJS+=		${SRCS:.c=.o} ${T_COMPAT_SRCS:.c=.o} ${T_MD5_SRC:.c=.o}
 .c.o:
 	${CC} ${CFLAGS} ${CPPFLAGS} -c $< -o $@
 
-crypt/md5.o:
-	mkdir -p crypt
-	( cd crypt && ln -s ../../crypt/md5.o . ||: )
-
 all: ${PROG}
 
 clean:
@@ -36,5 +32,4 @@ distclean: clean
 depend: .depend
 
 ${PROG}: ${DEPEND} ${OBJS}
-	cp ../crypt/*.o .
 	${CC} ${LDFLAGS} -o $@ ${OBJS} ${LDADD}
