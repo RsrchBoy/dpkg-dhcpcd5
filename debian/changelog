@@ -1,6 +1,7 @@
 dhcpcd5 (6.4.7) UNRELEASED; urgency=medium
 
   * Imported Upstream version 6.4.7.
+  * Override dh_auto_test, as 'make test' seems broken at the moment.
 
  -- Chris Weyl <cweyl@alumni.drew.edu>  Wed, 01 Oct 2014 00:29:47 -0700
 
