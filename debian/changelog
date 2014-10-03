@@ -1,3 +1,9 @@
+dhcpcd5 (6.4.7~14.04~ppa2) trusty; urgency=medium
+
+  * Build for trusty.
+
+ -- Chris Weyl <cweyl@alumni.drew.edu>  Thu, 02 Oct 2014 19:46:36 -0700
+
 dhcpcd5 (6.4.7~14.04~ppa1) trusty; urgency=medium
 
   * Build for trusty.
