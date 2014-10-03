@@ -17,5 +17,7 @@ override_dh_install:
 	mv debian/dhcpcd5/usr/share/man/man8/dhcpcd.8 \
 		debian/dhcpcd5/usr/share/man/man8/dhcpcd5.8
 
+override_dh_auto_test:
+
 %:
 	dh $@
