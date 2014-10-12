@@ -1,3 +1,11 @@
+dhcpcd5 (6.5.0-1) UNRELEASED; urgency=medium
+
+  * Imported Upstream version 6.4.3
+  * Imported Upstream version 6.4.7
+  * Imported Upstream version 6.5.0
+
+ -- Chris Weyl <cweyl@alumni.drew.edu>  Sun, 12 Oct 2014 12:55:00 -0700
+
 dhcpcd5 (6.4.7) UNRELEASED; urgency=medium
 
   * Imported Upstream version 6.4.7.
