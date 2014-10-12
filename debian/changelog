@@ -1,3 +1,12 @@
+dhcpcd5 (6.5.0-1) UNRELEASED; urgency=medium
+
+  * Imported Upstream version 6.4.3
+  * Imported Upstream version 6.4.7
+  * Imported Upstream version 6.5.0
+  * Fix tests -- they run now, at least.
+
+ -- Chris Weyl <cweyl@alumni.drew.edu>  Sun, 12 Oct 2014 12:55:00 -0700
+
 dhcpcd5 (6.4.7~14.04~ppa2) trusty; urgency=medium
 
   * Build for trusty.
