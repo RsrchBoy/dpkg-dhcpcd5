@@ -18,6 +18,8 @@ override_dh_install:
 		debian/dhcpcd5/usr/share/man/man8/dhcpcd5.8
 
 override_dh_auto_test:
+	cd test ; TOP=.. CONFIG_MK=config.mk $(MAKE) test
+	cd test ; ./test
 
 %:
 	dh $@
